@@ -5,8 +5,10 @@ import os
 from flask import Flask, jsonify, send_from_directory
 
 from config import Config
+from database.mongo import create_user_repository
 from database.models import ensure_database
 from routes.analytics import bp as analytics_bp
+from routes.auth import bp as auth_bp
 from routes.audio import bp as audio_bp
 from routes.engagement import bp as engagement_bp
 from routes.health import bp as health_bp
@@ -30,8 +32,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 		return response
 
 	ensure_database(app.config['DATABASE_PATH'])
+	app.extensions['user_repository'] = create_user_repository(app.config)
 
 	app.register_blueprint(health_bp, url_prefix='/api')
+	app.register_blueprint(auth_bp, url_prefix='/api')
 	app.register_blueprint(sessions_bp, url_prefix='/api')
 	app.register_blueprint(notes_bp, url_prefix='/api')
 	app.register_blueprint(engagement_bp, url_prefix='/api')
@@ -51,6 +55,9 @@ def create_app(test_config: dict | None = None) -> Flask:
 					'status': 'running',
 					'endpoints': [
 						'/api/health',
+						'/api/auth/register',
+						'/api/auth/login',
+						'/api/auth/me',
 						'/api/sessions',
 						'/api/sessions/<session_id>/notes',
 						'/api/engagement/track',
@@ -76,9 +83,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 	return app
 
 
-app = create_app()
-
-
 if __name__ == '__main__':
+	app = create_app()
 	app.run(host='0.0.0.0', port=int(os.getenv('PORT', '5000')), debug=True)
 

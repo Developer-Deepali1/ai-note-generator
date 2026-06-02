@@ -15,3 +15,6 @@ pytest
 SQLAlchemy
 Flask-SQLAlchemy
 Flask-Migrate
+bcrypt
+PyJWT
+pymongo

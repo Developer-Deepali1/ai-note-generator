@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database.connection import get_connection, initialize_schema
+from models.engagement import EngagementEvent
+from models.note import Note
+from models.session import Session
 from modules.nlp_engine import summarize_transcript
 
 
@@ -29,43 +32,25 @@ def parse_json(value: str | None, default: Any) -> Any:
 
 
 def session_to_dict(row: sqlite3.Row, note_count: int = 0, engagement_count: int = 0) -> dict[str, Any]:
-	return {
-		'id': row['id'],
-		'title': row['title'],
-		'context': row['context'],
-		'status': row['status'],
-		'participants': parse_json(row['participants_json'], []),
-		'created_at': row['created_at'],
-		'updated_at': row['updated_at'],
-		'note_count': note_count,
-		'engagement_count': engagement_count,
-		'transcript_excerpt': row['transcript'][:240] if row['transcript'] else '',
-	}
+	session = Session.from_row(row, note_count=note_count, engagement_count=engagement_count)
+	return session.to_dict() if session else {}
 
 
 def note_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-	return {
-		'id': row['id'],
-		'session_id': row['session_id'],
-		'title': row['title'],
-		'transcript': row['transcript'],
-		'summary': row['summary'],
-		'key_points': parse_json(row['key_points_json'], []),
-		'action_items': parse_json(row['action_items_json'], []),
-		'keywords': parse_json(row['keywords_json'], []),
-		'created_at': row['created_at'],
-	}
+	note = Note.from_row(row)
+	return note.to_dict() if note else {}
 
 
 def engagement_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-	return {
-		'id': row['id'],
-		'session_id': row['session_id'],
-		'participant_name': row['participant_name'],
-		'event_type': row['event_type'],
-		'score': row['score'],
-		'created_at': row['created_at'],
-	}
+	event = EngagementEvent.from_row(row)
+	if event is None:
+		return {}
+	payload = event.to_dict()
+	payload.pop('participant_id', None)
+	payload.pop('emotion_label', None)
+	payload.pop('metadata', None)
+	payload.pop('updated_at', None)
+	return payload
 
 
 def ensure_database(database_path: str) -> None:
@@ -73,27 +58,19 @@ def ensure_database(database_path: str) -> None:
 
 
 def create_session(database_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-	session_id = generate_id()
-	timestamp = utc_now()
-	participants = payload.get('participants', [])
+	session = Session.from_payload(payload)
 	with get_connection(database_path) as connection:
 		connection.execute(
 			'''
-			INSERT INTO sessions (id, title, context, status, participants_json, transcript, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO sessions (
+				id, user_id, title, context, status, participants_json, transcript,
+				started_at, ended_at, created_at, updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			''',
-			(
-				session_id,
-				payload.get('title', 'Untitled Session'),
-				payload.get('context', ''),
-				payload.get('status', 'active'),
-				normalize_json(participants),
-				payload.get('transcript', ''),
-				timestamp,
-				timestamp,
-			),
+			session.to_insert_tuple(),
 		)
-	return get_session(database_path, session_id)
+	return get_session(database_path, session.id)
 
 
 def list_sessions(database_path: str) -> list[dict[str, Any]]:
@@ -144,39 +121,28 @@ def update_session_transcript(database_path: str, session_id: str, transcript: s
 
 
 def create_note(database_path: str, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-	note_id = generate_id()
 	transcript = payload.get('transcript', '')
 	artifacts = summarize_transcript(transcript)
-	note_title = payload.get('title') or artifacts['summary'][:72]
-	timestamp = utc_now()
+	note = Note.from_artifacts(session_id, payload, artifacts)
 
 	with get_connection(database_path) as connection:
 		connection.execute(
 			'''
 			INSERT INTO notes (
 				id, session_id, title, transcript, summary,
-				key_points_json, action_items_json, keywords_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				key_points_json, action_items_json, keywords_json,
+				confidence_score, language_code, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			''',
-			(
-				note_id,
-				session_id,
-				note_title,
-				transcript,
-				artifacts['summary'],
-				normalize_json(artifacts['key_points']),
-				normalize_json(artifacts['action_items']),
-				normalize_json(artifacts['keywords']),
-				timestamp,
-			),
+			note.to_insert_tuple(),
 		)
 		if transcript:
 			connection.execute(
 				'UPDATE sessions SET transcript = ?, status = ?, updated_at = ? WHERE id = ?',
-				(transcript, 'analyzed', timestamp, session_id),
+				(transcript, 'analyzed', note.updated_at, session_id),
 			)
 
-	return get_note(database_path, note_id)
+	return get_note(database_path, note.id)
 
 
 def get_note(database_path: str, note_id: str) -> dict[str, Any] | None:
@@ -195,25 +161,20 @@ def list_notes(database_path: str, session_id: str) -> list[dict[str, Any]]:
 
 
 def create_engagement_event(database_path: str, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-	event_id = generate_id()
-	timestamp = utc_now()
+	event = EngagementEvent.from_payload(session_id, payload)
 	with get_connection(database_path) as connection:
 		connection.execute(
 			'''
-			INSERT INTO engagement_events (id, session_id, participant_name, event_type, score, created_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+			INSERT INTO engagement_events (
+				id, session_id, participant_name, participant_id, event_type,
+				score, emotion_label, metadata_json, created_at, updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			''',
-			(
-				event_id,
-				session_id,
-				payload.get('participant_name', 'Participant'),
-				payload.get('event_type', 'attended'),
-				float(payload.get('score', 0.0)),
-				timestamp,
-			),
+			event.to_insert_tuple(),
 		)
 	with get_connection(database_path) as connection:
-		row = connection.execute('SELECT * FROM engagement_events WHERE id = ?', (event_id,)).fetchone()
+		row = connection.execute('SELECT * FROM engagement_events WHERE id = ?', (event.id,)).fetchone()
 	return engagement_to_dict(row)
 
 
