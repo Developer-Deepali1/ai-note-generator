@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import routes.pipeline as pipeline_route
+
 
 def test_health_endpoint(client):
 	response = client.get('/api/health')
@@ -78,4 +80,28 @@ def test_pipeline_endpoint_can_analyze_and_persist(client):
 	assert payload['engagement']['attention_score'] >= 0.0
 	assert 'note' in payload
 	assert 'event' in payload
+
+
+def test_pipeline_endpoint_falls_back_to_nlp_when_gemini_fails(client, monkeypatch):
+	monkeypatch.setattr(
+		pipeline_route,
+		'generate_meeting_notes',
+		lambda transcript: (_ for _ in ()).throw(RuntimeError('Gemini unavailable')),
+	)
+
+	response = client.post(
+		'/api/pipeline/analyze',
+		json={
+			'transcript': 'We reviewed the roadmap and confirmed the next steps.',
+			'face_detected': True,
+			'eye_contact': 0.7,
+			'emotion': 'focused',
+		},
+	)
+	payload = response.get_json()
+
+	assert response.status_code == 200
+	assert {'transcription', 'transcript', 'analysis', 'engagement'} <= payload.keys()
+	assert payload['analysis']['summary']
+	assert payload['analysis']['key_points']
 

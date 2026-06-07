@@ -5,6 +5,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from modules.gemini_service import generate_meeting_notes
+from utils.logger import get_logger
+
 
 STOPWORDS = {
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'can', 'could',
@@ -42,6 +45,9 @@ SPEAKER_PATTERN = re.compile(r'^\s*([A-Z][A-Za-z ._-]{1,60}):\s+(.+)$')
 WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9'-]*")
 ACRONYM_PATTERN = re.compile(r'\b[A-Z]{2,}(?:-[A-Z0-9]+)?\b')
 PROPER_NOUN_PATTERN = re.compile(r'\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b')
+
+
+_LOGGER = get_logger('ai_note_generator.nlp_engine')
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,23 @@ def summarize_transcript(transcript: str) -> dict[str, Any]:
             },
         }
 
+    rule_based_artifacts = _summarize_rule_based_transcript(cleaned)
+
+    try:
+        gemini_artifacts = generate_meeting_notes(cleaned)
+    except Exception as exc:  # noqa: BLE001 - production boundary with fallback
+        _LOGGER.warning('Gemini analysis failed; using rule-based NLP fallback.', error=str(exc))
+        return rule_based_artifacts
+
+    if not _has_meaningful_gemini_output(gemini_artifacts):
+        _LOGGER.warning('Gemini returned an empty notes payload; using rule-based NLP fallback.')
+        return rule_based_artifacts
+
+    return _merge_gemini_and_rule_based_artifacts(rule_based_artifacts, gemini_artifacts)
+
+
+def _summarize_rule_based_transcript(transcript: str) -> dict[str, Any]:
+    cleaned = clean_transcript(transcript)
     sentences = segment_sentences(cleaned)
     key_points = extract_key_points(cleaned)
     summary_sentences = key_points[:2] if key_points else [sentence.text for sentence in sentences[:2]]
@@ -280,6 +303,68 @@ def summarize_transcript(transcript: str) -> dict[str, Any]:
             'estimated_reading_minutes': max(1, round(len(words) / 180)) if words else 0,
         },
     }
+
+
+def _merge_gemini_and_rule_based_artifacts(
+    rule_based: dict[str, Any],
+    gemini_artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    summary = str(gemini_artifacts.get('summary') or rule_based['summary']).strip()
+    key_points = _merge_text_lists(gemini_artifacts.get('key_points'), rule_based['key_points'])
+    action_items = _merge_text_lists(gemini_artifacts.get('action_items'), rule_based['action_items'])
+
+    return {
+        'summary': summary or rule_based['summary'],
+        'key_points': key_points,
+        'action_items': action_items,
+        'keywords': rule_based['keywords'],
+        'entities': rule_based['entities'],
+        'metadata': rule_based['metadata'],
+    }
+
+
+def _merge_text_lists(primary: Any, fallback: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    for value in _coerce_list(primary):
+        normalized = value.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            merged.append(value)
+
+    for value in fallback:
+        normalized = value.casefold()
+        if normalized not in seen:
+            seen.add(normalized)
+            merged.append(value)
+
+    return merged
+
+
+def _coerce_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
+
+
+def _has_meaningful_gemini_output(artifacts: dict[str, Any]) -> bool:
+    if not artifacts:
+        return False
+    summary = str(artifacts.get('summary') or '').strip()
+    if summary:
+        return True
+    return any(_coerce_list(artifacts.get(key)) for key in ('key_points', 'action_items', 'decisions', 'risks', 'follow_ups'))
 
 
 def classify_transcript(transcript: str) -> dict[str, Any]:
