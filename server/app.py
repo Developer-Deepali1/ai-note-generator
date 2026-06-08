@@ -10,6 +10,7 @@ from database.models import ensure_database
 from routes.analytics import bp as analytics_bp
 from routes.auth import bp as auth_bp
 from routes.audio import bp as audio_bp
+from routes.emotion import bp as emotion_bp
 from routes.engagement import bp as engagement_bp
 from routes.health import bp as health_bp
 from routes.notes import bp as notes_bp
@@ -39,6 +40,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 	app.register_blueprint(sessions_bp, url_prefix='/api')
 	app.register_blueprint(notes_bp, url_prefix='/api')
 	app.register_blueprint(engagement_bp, url_prefix='/api')
+	app.register_blueprint(emotion_bp, url_prefix='/api')
 	app.register_blueprint(pipeline_bp, url_prefix='/api')
 	app.register_blueprint(analytics_bp, url_prefix='/api')
 	app.register_blueprint(audio_bp, url_prefix='/api')
@@ -61,6 +63,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 						'/api/sessions',
 						'/api/sessions/<session_id>/notes',
 						'/api/engagement/track',
+						'/api/emotion/webcam',
 						'/api/pipeline/analyze',
 						'/api/analytics/overview',
 						'/api/audio/transcribe',

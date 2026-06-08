@@ -18,3 +18,5 @@ Flask-Migrate
 bcrypt
 PyJWT
 pymongo
+opencv-python-headless
+deepface

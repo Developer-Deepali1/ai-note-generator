@@ -16,6 +16,8 @@ export const createNote = (sessionId: string, payload: any) => api.post(`/api/se
 
 export const transcribe = (payload: any) => api.post('/api/audio/transcribe', payload)
 export const trackEngagement = (payload: any) => api.post('/api/engagement/track', payload)
+export const analyzeWebcamEmotion = (payload: { frame: string }) =>
+	api.post('/api/emotion/webcam', payload)
 export const pipelineAnalyze = (payload: any) => api.post('/api/pipeline/analyze', payload)
 
 export default api

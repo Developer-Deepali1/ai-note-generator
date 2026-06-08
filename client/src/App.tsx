@@ -1,5 +1,7 @@
 import './App.css'
 
+import { WebcamEmotionTracker } from './components/WebcamEmotionTracker'
+
 const capabilities = [
   {
     title: 'Automatic speech-to-text',
@@ -109,6 +111,19 @@ function App() {
             <p>Review attendance, participation, and session analytics.</p>
           </div>
         </div>
+      </section>
+
+      <section className="emotion-lab" id="emotion-tracking">
+        <div className="emotion-copy">
+          <p className="section-label">Webcam emotion tracking</p>
+          <h2>Sample facial emotion signals without interrupting the session.</h2>
+          <p>
+            The browser captures a frame every 5 seconds with <code>getUserMedia()</code>, sends it to the Flask API, and logs the
+            dominant emotion with a confidence score for downstream engagement analytics.
+          </p>
+        </div>
+
+        <WebcamEmotionTracker />
       </section>
     </main>
   )
