@@ -28,6 +28,11 @@ class _FakeNumpy:
 
 class _FakeDeepFace:
 	@staticmethod
+	def extract_faces(image, detector_backend, enforce_detection):
+		# Return a list with one face region
+		return [{'region': {'x': 0, 'y': 0, 'w': 100, 'h': 100}}]
+
+	@staticmethod
 	def analyze(image, actions, detector_backend, enforce_detection):
 		assert actions == ['emotion']
 		assert detector_backend == 'opencv'
@@ -45,6 +50,9 @@ def test_analyze_webcam_frame_returns_normalized_emotion(monkeypatch):
 
 	result = emotion_ai.analyze_webcam_frame(f'data:image/jpeg;base64,{VALID_FRAME}')
 
+	assert result['face_detected'] is True
+	assert result['face_count'] == 1
+	assert result['presence_score'] == 1.0
 	assert result['emotion'] == 'happy'
 	assert result['confidence'] == pytest.approx(0.93, rel=1e-3)
 	assert result['source'] == 'deepface'
@@ -58,11 +66,40 @@ def test_emotion_webcam_endpoint_rejects_missing_frame(client):
 	assert response.get_json()['error'] == 'frame is required'
 
 
+def test_analyze_webcam_frame_handles_no_face_detected(monkeypatch):
+	"""Test that no face returns presence_score 0 and null emotion."""
+	class _FakeDeepFaceNoFace:
+		@staticmethod
+		def extract_faces(image, detector_backend, enforce_detection):
+			return []  # No faces detected
+
+		@staticmethod
+		def analyze(image, actions, detector_backend, enforce_detection):
+			raise emotion_ai.EmotionAnalysisError('No face detected.')
+
+	monkeypatch.setattr(emotion_ai, 'np', _FakeNumpy)
+	monkeypatch.setattr(emotion_ai, 'cv2', _FakeCv2)
+	monkeypatch.setattr(emotion_ai, 'DeepFace', _FakeDeepFaceNoFace)
+
+	result = emotion_ai.analyze_webcam_frame(f'data:image/jpeg;base64,{VALID_FRAME}')
+
+	assert result['face_detected'] is False
+	assert result['face_count'] == 0
+	assert result['presence_score'] == 0.0
+	assert result['emotion'] is None
+	assert result['confidence'] == 0.0
+	assert result['source'] == 'deepface'
+	assert result['timestamp']
+
+
 def test_emotion_webcam_endpoint_returns_success_payload(client, monkeypatch):
 	monkeypatch.setattr(
 		emotion_ai,
 		'analyze_webcam_frame',
 		lambda frame: {
+			'face_detected': True,
+			'face_count': 1,
+			'presence_score': 1.0,
 			'emotion': 'happy',
 			'confidence': 0.93,
 			'source': 'deepface',
@@ -74,12 +111,13 @@ def test_emotion_webcam_endpoint_returns_success_payload(client, monkeypatch):
 	payload = response.get_json()
 
 	assert response.status_code == 200
-	assert payload == {
-		'emotion': 'happy',
-		'confidence': 0.93,
-		'source': 'deepface',
-		'timestamp': '2026-06-08T12:00:00+00:00',
-	}
+	assert payload['face_detected'] is True
+	assert payload['face_count'] == 1
+	assert payload['presence_score'] == 1.0
+	assert payload['emotion'] == 'happy'
+	assert payload['confidence'] == 0.93
+	assert payload['source'] == 'deepface'
+	assert payload['timestamp']
 
 
 def test_emotion_webcam_endpoint_handles_analysis_errors(client, monkeypatch):

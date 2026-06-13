@@ -64,6 +64,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 						'/api/sessions/<session_id>/notes',
 						'/api/engagement/track',
 						'/api/emotion/webcam',
+						'/api/analytics/eye-contact',
 						'/api/pipeline/analyze',
 						'/api/analytics/overview',
 						'/api/audio/transcribe',

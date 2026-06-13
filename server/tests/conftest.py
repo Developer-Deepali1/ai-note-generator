@@ -18,3 +18,16 @@ def app(tmp_path: Path):
 def client(app):
 	return app.test_client()
 
+
+@pytest.fixture(autouse=True)
+def reset_eye_contact_session_state():
+	try:
+		from modules import eye_contact
+	except Exception:
+		yield
+		return
+
+	eye_contact.reset_eye_contact_session()
+	yield
+	eye_contact.reset_eye_contact_session()
+

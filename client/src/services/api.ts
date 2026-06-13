@@ -18,6 +18,8 @@ export const transcribe = (payload: any) => api.post('/api/audio/transcribe', pa
 export const trackEngagement = (payload: any) => api.post('/api/engagement/track', payload)
 export const analyzeWebcamEmotion = (payload: { frame: string }) =>
 	api.post('/api/emotion/webcam', payload)
+export const analyzeEyeContact = (payload: { frame: string }) =>
+	api.post('/api/analytics/eye-contact', payload)
 export const pipelineAnalyze = (payload: any) => api.post('/api/pipeline/analyze', payload)
 
 export default api

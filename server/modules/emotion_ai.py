@@ -32,23 +32,46 @@ class EmotionAnalysisError(RuntimeError):
 
 
 def analyze_webcam_frame(frame: str) -> dict[str, Any]:
-	"""Analyze a Base64 webcam frame and return the dominant emotion."""
+	"""Analyze a Base64 webcam frame and return emotion + face presence metrics."""
 	if cv2 is None or DeepFace is None:
 		raise EmotionAnalysisError('DeepFace/OpenCV dependencies are unavailable.')
 
 	image = _decode_base64_frame(frame)
+	
+	# Detect faces in frame
+	face_count, presence_score = _detect_faces(image)
+	
+	timestamp = datetime.now(timezone.utc).isoformat()
+	
+	# If no face detected, return minimal payload
+	if face_count == 0:
+		payload = {
+			'face_detected': False,
+			'face_count': 0,
+			'presence_score': 0.0,
+			'emotion': None,
+			'confidence': 0.0,
+			'source': 'deepface',
+			'timestamp': timestamp,
+		}
+		_LOGGER.info('No face detected in frame.')
+		return payload
+	
+	# Analyze emotion for detected face(s)
 	result = _run_deepface_analysis(image)
 	emotion = _extract_emotion_label(result)
 	confidence = _extract_confidence(result, emotion)
-	timestamp = datetime.now(timezone.utc).isoformat()
 
 	payload = {
+		'face_detected': True,
+		'face_count': face_count,
+		'presence_score': presence_score,
 		'emotion': emotion,
 		'confidence': confidence,
 		'source': 'deepface',
 		'timestamp': timestamp,
 	}
-	_LOGGER.info('Webcam emotion analyzed.', emotion=emotion, confidence=confidence)
+	_LOGGER.info('Webcam emotion analyzed.', face_count=face_count, emotion=emotion, confidence=confidence)
 	return payload
 
 
@@ -82,6 +105,25 @@ def _pad_base64(value: str) -> str:
 	if missing:
 		value += '=' * (4 - missing)
 	return value
+
+
+def _detect_faces(image: np.ndarray) -> tuple[int, float]:
+	"""Detect faces in image and return (face_count, presence_score)."""
+	try:
+		# DeepFace.extract_faces returns a list of detected face regions
+		faces = DeepFace.extract_faces(
+			image,
+			detector_backend='opencv',
+			enforce_detection=False,  # Don't raise error if no faces
+		)
+		face_count = len(faces) if isinstance(faces, list) else 0
+		# presence_score: 0.0 if no faces, 1.0 if face(s) detected
+		presence_score = 1.0 if face_count > 0 else 0.0
+		return face_count, presence_score
+	except Exception as exc:  # noqa: BLE001 - DeepFace may raise multiple exception types
+		_LOGGER.debug('Face detection encountered an error.', error=str(exc))
+		# On detection error, assume no face detected
+		return 0, 0.0
 
 
 def _run_deepface_analysis(image: np.ndarray) -> dict[str, Any]:
